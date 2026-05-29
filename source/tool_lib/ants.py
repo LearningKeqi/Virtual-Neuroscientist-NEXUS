@@ -1,0 +1,202 @@
+from langchain_core.tools import tool
+from .prepare import *
+
+
+# need desc
+def ants_bias_field_correction(input_file: str, output_file: str, shrink_factor: int = 4) -> str:
+    """
+    Perform N4 Bias Field Correction using ANTs N4BiasFieldCorrection.
+
+    **Parameters:**
+    - input_file: Path to input t1w file.
+    - output_file: Path to save bias-corrected t1w image.
+    - shrink_factor: Speed-up factor.
+
+    **Outputs:**
+    - Bias-corrected NIfTI image.
+    """
+    out_dir = os.path.dirname(output_file)
+    command = f"mkdir -p {out_dir} && N4BiasFieldCorrection -d 3 -i {input_file} -o {output_file} -s {shrink_factor}"
+    return run_command(command)
+
+
+# need desc
+def ants_skull_strip(input_file: str, output_prefix: str) -> str:
+    """
+    Perform skull stripping using ANTs' antsBrainExtraction.sh script.
+
+    **Parameters:**
+    - input_file: Path to T1-weighted image (NIfTI) with skull.
+    - output_prefix: Prefix for the output files, including the directory path.
+
+    **Outputs:**
+    - Skull-stripped brain image and brain mask.
+    - {output_prefix}BrainExtractionBrain.nii.gz: Skull-stripped brain image.
+    - {output_prefix}BrainExtractionMask.nii.gz: Skull-stripped brain mask.
+    """
+
+    template_file = "Path/tools/mni_template/mni_template_1mm/mni152_t1w_withskull.nii.gz"
+    template_mask = "Path/tools/mni_template/mni_template_1mm/mni152_brain_mask.nii.gz"
+
+    output_dir = os.path.dirname(output_prefix)
+
+    command = (
+        f"mkdir -p {output_dir} && "
+        f"antsBrainExtraction.sh "
+        f"-d 3 "
+        f"-a {input_file} "
+        f"-e {template_file} "
+        f"-m {template_mask} "
+        f"-o {output_prefix}"
+    )
+    return run_command(command)
+
+
+# need desc
+def ants_tissue_segmentation(
+    input_file: str,
+    output_prefix: str,
+    mask_file: str,
+    n_classes: int = 3,
+    convergence: str = "[5,0.01]",
+    mrf_smoothing: str = "[0.2,1x1x1]",
+) -> str:
+    """
+    Perform tissue segmentation using ANTs Atropos.
+
+    Prerequisites: This tool must be used after t1w skull stripping, but the skull stripping step can be performed by any tool or software (like AFNI, FSL, etc.). It does not have to be ANTs Atropos.
+
+    **Parameters:**
+    - input_file: Path to the Skull-stripped t1w image (NIfTI format).
+    - output_prefix: Prefix for segmentation outputs, including the directory path.
+    - mask_file: Path to the Brain mask generated from skull stripping step.
+    - n_classes: Number of tissue classes (e.g., 3 = GM/WM/CSF).
+    - convergence: Convergence criteria in format '[iterations,tolerance]'.
+    - mrf_smoothing: MRF smoothing parameters '[weight, radius]'.
+
+    **Outputs:**
+    - Segmentation image and probability maps. located at {output_prefix}Seg.nii.gz and {output_prefix}SegProb%02d.nii.gz.
+    - {output_prefix}Seg.nii.gz: hard brain tissue segmentation map in which each voxel is assigned a discrete label corresponding to CSF, gray matter, or white matter, used for QC.
+    - {output_prefix}SegProb02.nii.gz: Probability map for gray matter in native space.
+    """
+    output_param = f"[{output_prefix}Seg.nii.gz,{output_prefix}SegProb%02d.nii.gz]"
+
+    output_dir = os.path.dirname(output_prefix)
+
+    command = (
+        f"mkdir -p {output_dir} && "
+        f"Atropos -d 3 "
+        f"-a {input_file} "
+        f"-x {mask_file} "
+        f"-o {output_param} "
+        f"-c {convergence} "
+        f"-m {mrf_smoothing} "
+        f"-i kmeans[{n_classes}]"
+    )
+    return run_command(command)
+
+
+# need desc
+def ants_normalize_to_mni_template(input_file: str, output_prefix: str) -> str:
+    """
+    Normalize t1w image to mni template space using ANTs antsRegistrationSyN.
+
+    Prerequisites: This tool must be used after t1w skull stripping, but the skull stripping step can be performed by any tool or software (like AFNI, FSL, ANTs, etc.).
+
+    **Parameters:**
+    - input_file: Path to the skull-stripped T1w image NIfTI file.
+    - output_prefix: Prefix for output files.
+
+    **Outputs:**
+    - {output_prefix}Warped.nii.gz: Normalized image in mni template space.
+    """
+
+
+    output_dir = os.path.dirname(output_prefix)
+    template_file = 'Path/tools/mni_template/mni_template_1mm_aligned/mni152_t1w_brain.nii.gz'
+
+    command = f"mkdir -p {output_dir} && antsRegistrationSyN.sh -d 3 -f {template_file} -m {input_file} -o {output_prefix}"
+
+    return run_command(command)
+
+
+
+
+# need desc
+def ants_warp_gm_tissue_seg_to_mni(
+    path_to_gm_tissue_prob_map: str,
+    ants_norm_output_prefix: str
+    ) -> str:
+    """
+    Warp the Gray Matter Probability Map of the tissue segmentation to MNI space using ANTs.
+
+    Prerequisites: This tool must be used after 'ants_normalize_to_mni_template' tool.
+
+    **Parameters:**
+    - path_to_gm_tissue_prob_map: Path to the gray matter probability map file in native space.
+    - ants_norm_output_prefix: Output prefix for the normalized image generated by 'ants_normalize_to_mni_template' tool.
+
+    **Outputs:**
+    - {path_to_gm_tissue_prob_map.replace('.nii.gz', '_gm_mni.nii.gz')}: The Gray Matter Probability Map in MNI space, under the same directory as the original gray matter probability map file.
+    """
+
+    reference_mni_file = (
+        "Path/tools/mni_template/"
+        "mni_template_1mm_aligned/mni152_t1w_brain.nii.gz"
+    )
+
+    gm_mni = path_to_gm_tissue_prob_map.replace('.nii.gz', '_gm_mni.nii.gz')
+
+    interpolation = "Linear"
+
+    warp_file = f"{ants_norm_output_prefix}1Warp.nii.gz"
+    affine_file = f"{ants_norm_output_prefix}0GenericAffine.mat"
+
+    command = (
+        f"antsApplyTransforms -d 3 "
+        f"-i {path_to_gm_tissue_prob_map} "
+        f"-r {reference_mni_file} "
+        f"-o {gm_mni} "
+        f"-n {interpolation} "
+        f"-t {warp_file} "
+        f"-t {affine_file}"
+    )
+
+    return run_command(command)
+
+
+
+# need desc
+def ants_cortical_thickness_estimate(
+    input_file: str,
+    output_prefix: str
+) -> str:
+    """
+    Perform cortical thickness estimation using ANTs antsCorticalThickness.sh.
+
+    **Parameters:**
+    - input_file: Path to the T1w image (NIfTI format).
+    - output_prefix: Prefix for output files.
+
+    **Outputs:**
+    - Cortical thickness image, located at {output_prefix}CorticalThickness.nii.gz, and other related files.
+    """
+
+    output_dir = os.path.dirname(output_prefix)
+
+    template_image = "Path/tools/mni_template/mni_template_1mm/mni152_t1w_brain.nii.gz"
+    brain_mask = "Path/tools/mni_template/mni_template_1mm/mni152_brain_mask.nii.gz"
+    prior_template_pattern = "Path/tools/ants-2.5.4/CorticalThickness_template/antsBrainSegmentationPosteriors%d.nii.gz"
+
+
+    command = (
+        f"mkdir -p {output_dir} && "
+        f"antsCorticalThickness.sh -d 3 "
+        f"-a {input_file} "
+        f"-e {template_image} "
+        f"-m {brain_mask} "
+        f"-p {prior_template_pattern} "
+        f"-o {output_prefix}"
+    )
+
+    return run_command(command)
