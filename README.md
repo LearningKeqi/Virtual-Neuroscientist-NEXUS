@@ -1,5 +1,7 @@
 # Towards a Virtual Neuroscientist: Autonomous Neuroimaging Analysis via Multi-Agent Collaboration (NEXUS)
 
+🌟🚗 **Read our paper**: [https://arxiv.org/abs/2605.09366](https://arxiv.org/abs/2605.09366)
+
 ![NEXUS framework](NEXUS_framework.png)
 
 NEXUS is a multi-agent **AI Neuroscientist** system that automates end-to-end neuroimaging research workflows — from raw MRI data inspection, preprocessing, and quality control all the way through downstream predictive modeling. It and orchestrates a **Supervisor Agent** together with four specialized sub-agents that wrap standard neuroimaging toolboxes (FSL, AFNI, ANTs, fMRIPrep, FreeSurfer, MRIQC, etc.).
